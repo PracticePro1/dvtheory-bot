@@ -40,6 +40,8 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "next":
         context.user_data['idx'] = context.user_data.get('idx', 0) + 1
         await send_question(update, context)
+    elif data == "back":
+        await start(update, context)
 
 async def start_quiz(update, context, topic_id):
     qs = await supabase_get(f"questions?topic_id=eq.{topic_id}&limit=10")
@@ -90,12 +92,9 @@ async def show_results(update, context):
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="back")]])
     )
 
-def main():
+if __name__ == "__main__":
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(callback))
     print("Bot is running...")
     app.run_polling()
-
-if __name__ == "__main__":
-    main()
