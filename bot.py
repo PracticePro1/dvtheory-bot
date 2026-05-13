@@ -9,6 +9,7 @@ SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 async def supabase_get(endpoint):
     async with httpx.AsyncClient() as client:
@@ -20,17 +21,27 @@ async def supabase_get(endpoint):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     topics = await supabase_get("topics?select=id,name&is_premium=eq.false&limit=10")
-    keyboard = [[InlineKeyboardButton(t['name'], callback_data=f"topic_{t['id']}")] for t in topics]
-    keyboard.append([InlineKeyboardButton("⭐ Upgrade", callback_data="upgrade")])
-    await update.message.reply_text("Welcome! Choose a topic:", reply_markup=InlineKeyboardMarkup(keyboard))
+    keyboard = []
+    for t in topics:
+        keyboard.append([InlineKeyboardButton(t['name'], callback_data=f"topic_{t['id']}")])
+    keyboard.append([InlineKeyboardButton("⭐ Upgrade to Premium", callback_data="upgrade")])
+    await update.message.reply_text(
+        "🚗 Welcome to DVTheory!\n\nChoose a topic to start practicing:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    data = q.data
+    query = update.callback_query
+    await query.answer()
+    data = query.data
     
     if data == "upgrade":
-        await q.edit_message_text("Premium: 25 GHS one-time. Contact @support")
+        await query.edit_message_text(
+            "🔓 PREMIUM ACCESS - 25 GHS\n\nContact @Support to purchase lifetime access to all 910+ questions!",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
+        )
+    elif data == "back":
+        await start(update, context)
     elif data.startswith("topic_"):
         topic_id = data.split("_")[1]
         await start_quiz(update, context, topic_id)
@@ -40,30 +51,30 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "next":
         context.user_data['idx'] = context.user_data.get('idx', 0) + 1
         await send_question(update, context)
-    elif data == "back":
-        await start(update, context)
 
 async def start_quiz(update, context, topic_id):
-    qs = await supabase_get(f"questions?topic_id=eq.{topic_id}&limit=10")
-    if not qs:
-        await update.callback_query.edit_message_text("No questions")
+    questions = await supabase_get(f"questions?topic_id=eq.{topic_id}&limit=10")
+    if not questions:
+        await update.callback_query.edit_message_text("No questions available for this topic.")
         return
-    context.user_data['questions'] = qs
+    context.user_data['questions'] = questions
     context.user_data['idx'] = 0
     context.user_data['score'] = 0
     await send_question(update, context)
 
 async def send_question(update, context):
-    qs = context.user_data.get('questions', [])
+    questions = context.user_data.get('questions', [])
     idx = context.user_data.get('idx', 0)
-    if idx >= len(qs):
+    if idx >= len(questions):
         await show_results(update, context)
         return
-    q = qs[idx]
+    q = questions[idx]
     opts = [q['option_a'], q['option_b'], q['option_c']]
-    keyboard = [[InlineKeyboardButton(opt, callback_data=f"ans_{idx}_{i}")] for i, opt in enumerate(opts)]
+    keyboard = []
+    for i, opt in enumerate(opts):
+        keyboard.append([InlineKeyboardButton(f"{chr(65+i)}. {opt}", callback_data=f"ans_{idx}_{i}")])
     await update.callback_query.edit_message_text(
-        f"Q{idx+1}/{len(qs)}\n\n{q['question_text']}",
+        f"📚 Question {idx+1}/{len(questions)}\n\n{q['question_text']}",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -72,29 +83,33 @@ async def check_answer(update, context, q_idx, a_idx):
     opts = [q['option_a'], q['option_b'], q['option_c']]
     is_correct = (opts[a_idx] == q['correct_answer'])
     if is_correct:
-        context.user_data['score'] += 1
-        msg = f"✅ Correct!\n\n{q['correct_answer']}"
+        context.user_data['score'] = context.user_data.get('score', 0) + 1
+        msg = f"✅ CORRECT!\n\nAnswer: {q['correct_answer']}"
     else:
-        msg = f"❌ Wrong!\n\nCorrect: {q['correct_answer']}"
+        msg = f"❌ WRONG!\n\nCorrect answer: {q['correct_answer']}"
     if q.get('explanation'):
         msg += f"\n\n📖 {q['explanation']}"
     await update.callback_query.edit_message_text(
         msg,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Next", callback_data="next")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➡️ Next", callback_data="next")]])
     )
 
 async def show_results(update, context):
     score = context.user_data.get('score', 0)
     total = len(context.user_data.get('questions', []))
-    pct = int(score/total*100) if total else 0
+    pct = int(score/total*100) if total > 0 else 0
+    rating = "🏆 EXCELLENT!" if pct >= 80 else "👍 GOOD!" if pct >= 60 else "📚 NEEDS PRACTICE"
     await update.callback_query.edit_message_text(
-        f"Quiz Complete!\n\nScore: {score}/{total} ({pct}%)\n\n{'Great job!' if pct>=70 else 'Keep practicing!'}",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Back", callback_data="back")]])
+        f"📊 QUIZ COMPLETE!\n\nScore: {score}/{total} ({pct}%)\n\n{rating}\n\nKeep practicing to improve!",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="back")]])
     )
 
-if __name__ == "__main__":
+def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(callback))
-    print("Bot is running...")
+    logger.info("DVTheory Bot is starting...")
     app.run_polling()
+
+if __name__ == "__main__":
+    main()
